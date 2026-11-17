@@ -1,0 +1,169 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="chudo.ProductWindow"
+        Width="800"
+        Height="640"
+        WindowStartupLocation="CenterOwner">
+    <ScrollViewer>
+        <Grid ColumnDefinitions="280,*" Margin="16">
+            <Image x:Name="PictureImage" Grid.Column="0" Width="260" Height="200"
+                   Stretch="Uniform" VerticalAlignment="Top" />
+            <StackPanel Grid.Column="1" Spacing="6">
+                <TextBlock x:Name="ManufacturerText" />
+                <TextBlock x:Name="NameText" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" />
+                <TextBlock x:Name="CategoryText" />
+                <TextBlock x:Name="OldPriceText" TextDecorations="Strikethrough" />
+                <TextBlock x:Name="PriceText" FontSize="20" />
+                <TextBlock x:Name="CompositionText" TextWrapping="Wrap" />
+                <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" />
+                <TextBlock x:Name="SizeRangeText" TextWrapping="Wrap" />
+                <TextBlock Text="Доступные размеры:" Margin="0,10,0,0" />
+                <ComboBox x:Name="SizeBox" Width="250" SelectionChanged="SizeBox_SelectionChanged" />
+                <TextBlock Text="Количество пар:" />
+                <NumericUpDown x:Name="QuantityBox" Width="250" HorizontalAlignment="Left"
+                               Minimum="1" Maximum="1" Value="1" Increment="1" FormatString="0" />
+                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,10,0,0">
+                    <Button Content="Добавить в заказ" Click="AddButton_Click" />
+                    <Button Content="Назад" Click="BackButton_Click" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</Window>
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using chudo.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace chudo;
+
+public partial class ProductWindow : Window
+{
+    private class SizeOption
+    {
+        public int SizeId { get; set; }
+        public string SizeText { get; set; } = "";
+        public int AvailableQuantity { get; set; }
+
+        public override string ToString()
+        {
+            return $"{SizeText} (в наличии: {AvailableQuantity})";
+        }
+    }
+
+    private readonly ProductCard card;
+
+    public ProductWindow(ProductCard card)
+    {
+        InitializeComponent();
+        this.card = card;
+        Title = AppInfo.WindowTitle("Просмотр товара");
+        Opened += ProductWindow_Opened;
+    }
+
+    private async void ProductWindow_Opened(object? sender, EventArgs e)
+    {
+        try
+        {
+            LoadProduct();
+        }
+        catch (Exception)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка",
+                "Не удалось загрузить данные товара из базы данных. Закройте окно и попробуйте ещё раз.",
+                MessageType.Error);
+        }
+    }
+
+    private void LoadProduct()
+    {
+        using var db = new PostgresContext();
+
+        var product = db.Products
+            .Include(item => item.Manufacturer)
+            .Include(item => item.Category)
+            .Include(item => item.ProductSizes)
+            .ThenInclude(productSize => productSize.Size)
+            .First(item => item.ProductId == card.ProductId);
+
+        PictureImage.Source = ImageLoader.Load(product.ImagePath);
+        ManufacturerText.Text = $"Производство: {product.Manufacturer.ManufacturerName}";
+        NameText.Text = product.ProductName;
+        CategoryText.Text = $"Категория: {product.Category.CategoryName}";
+        OldPriceText.Text = card.OldPriceText;
+        OldPriceText.IsVisible = card.HasDiscount;
+        PriceText.Text = card.PriceText;
+        CompositionText.Text = $"Состав: {product.Composition}";
+        DescriptionText.Text = $"Описание: {product.Description}";
+
+        var allSizes = product.ProductSizes
+            .OrderBy(productSize => productSize.Size.SizeValue)
+            .ToList();
+
+        SizeRangeText.Text = "Размерный ряд: "
+            + string.Join(", ", allSizes.Select(productSize => productSize.Size.SizeValue.ToString("0.#")));
+
+        var options = new List<SizeOption>();
+        foreach (var productSize in allSizes)
+        {
+            var availableQuantity = productSize.Quantity - Session.GetCartQuantity(product.ProductId, productSize.SizeId);
+            if (availableQuantity > 0)
+            {
+                options.Add(new SizeOption
+                {
+                    SizeId = productSize.SizeId,
+                    SizeText = productSize.Size.SizeValue.ToString("0.#"),
+                    AvailableQuantity = availableQuantity
+                });
+            }
+        }
+
+        SizeBox.ItemsSource = options;
+    }
+
+    private void SizeBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var option = SizeBox.SelectedItem as SizeOption;
+        if (option == null)
+        {
+            return;
+        }
+
+        QuantityBox.Maximum = option.AvailableQuantity;
+        QuantityBox.Value = 1;
+    }
+
+    private async void AddButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var option = SizeBox.SelectedItem as SizeOption;
+        if (option == null)
+        {
+            await MessageWindow.ShowAsync(this, "Предупреждение",
+                "Выберите размер из списка. Если список пуст, этого товара сейчас нет в наличии.",
+                MessageType.Warning);
+            return;
+        }
+
+        var quantity = (int)(QuantityBox.Value ?? 0);
+        if (quantity < 1 || quantity > option.AvailableQuantity)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка",
+                $"Укажите количество от 1 до {option.AvailableQuantity}: столько пар этого размера доступно.",
+                MessageType.Error);
+            return;
+        }
+
+        Session.AddToCart(card.ProductId, option.SizeId, card.Title, option.SizeText, quantity, card.FinalPrice);
+
+        await MessageWindow.ShowAsync(this, "Информация", "Товар добавлен в заказ.", MessageType.Info);
+        Close();
+    }
+
+    private void BackButton_Click(object? sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+}
