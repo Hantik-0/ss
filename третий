@@ -1,0 +1,230 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:chudo"
+        x:Class="chudo.CatalogWindow"
+        Width="1000"
+        Height="700"
+        MinWidth="700"
+        WindowStartupLocation="CenterScreen">
+    <Grid RowDefinitions="Auto,Auto,*" Margin="12">
+
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,12">
+            <Image x:Name="LogoImage" Grid.Column="0" Width="80" Height="50" Stretch="Uniform" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="1" Text="Каталог обуви" FontSize="24" VerticalAlignment="Center" />
+            <TextBlock x:Name="UserNameText" Grid.Column="2" VerticalAlignment="Center" Margin="0,0,12,0" />
+            <Button x:Name="OrdersButton" Grid.Column="3" Content="Заказы" Margin="0,0,8,0"
+                    IsVisible="False" Click="OrdersButton_Click" />
+            <Button x:Name="OrderButton" Grid.Column="4" Content="Заказ (0)" Margin="0,0,8,0"
+                    Click="OrderButton_Click" />
+            <Button Grid.Column="5" Content="Выйти" Click="LogoutButton_Click" />
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,12">
+            <TextBox x:Name="SearchBox" Grid.Column="0" Watermark="Поиск по наименованию и описанию" />
+            <ComboBox x:Name="SortBox" Grid.Column="1" Width="220" Margin="12,0,0,0"
+                      SelectedIndex="0" SelectionChanged="Filter_SelectionChanged">
+                <ComboBoxItem Content="Без сортировки" />
+                <ComboBoxItem Content="Цена по возрастанию" />
+                <ComboBoxItem Content="Цена по убыванию" />
+            </ComboBox>
+            <ComboBox x:Name="CategoryBox" Grid.Column="2" Width="220" Margin="12,0,0,0"
+                      SelectionChanged="Filter_SelectionChanged" />
+        </Grid>
+
+        <ListBox x:Name="ProductList" Grid.Row="2" SelectionChanged="ProductList_SelectionChanged">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="local:ProductCard">
+                    <Border BorderBrush="Black" BorderThickness="1" Padding="8"
+                            Background="{Binding BackgroundBrush}">
+                        <Grid ColumnDefinitions="140,*,170">
+                            <Image Grid.Column="0" Width="120" Height="90" Stretch="Uniform"
+                                   Source="{Binding Picture}" />
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="Bold" />
+                                <TextBlock Text="{Binding CategoryText}" />
+                                <TextBlock Text="{Binding QuantityText}" />
+                                <TextBlock Text="{Binding CompositionText}" FontSize="12" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                <TextBlock Text="{Binding OldPriceText}" TextDecorations="Strikethrough"
+                                           IsVisible="{Binding HasDiscount}" HorizontalAlignment="Right" />
+                                <TextBlock Text="{Binding PriceText}" FontSize="20" HorizontalAlignment="Right" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</Window>
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using chudo.Models;
+
+namespace chudo;
+
+public partial class CatalogWindow : Window
+{
+    private List<ProductCard> allCards = new();
+
+    private bool isReady = false;
+
+    public CatalogWindow()
+    {
+        InitializeComponent();
+        Title = AppInfo.WindowTitle("Каталог обуви");
+        UserNameText.Text = Session.CurrentUserFullName;
+        LogoImage.Source = ImageLoader.Load("logo.png");
+        OrdersButton.IsVisible = Session.IsStaff;
+
+        SearchBox.PropertyChanged += SearchBox_PropertyChanged;
+        Opened += CatalogWindow_Opened;
+    }
+
+    private async void CatalogWindow_Opened(object? sender, EventArgs e)
+    {
+        try
+        {
+            LoadProducts();
+            FillCategories();
+            isReady = true;
+            ApplyFilters();
+            UpdateOrderButton();
+        }
+        catch (Exception)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка",
+                "Не удалось загрузить каталог из базы данных. Проверьте, что PostgreSQL запущен и данные импортированы, затем перезапустите приложение.",
+                MessageType.Error);
+        }
+    }
+
+    private void LoadProducts()
+    {
+        allCards = ProductService.LoadCards();
+    }
+
+    private void FillCategories()
+    {
+        using var db = new PostgresContext();
+
+        var categoryNames = db.Categories
+            .OrderBy(category => category.CategoryName)
+            .Select(category => category.CategoryName)
+            .ToList();
+
+        categoryNames.Insert(0, "Все категории");
+        CategoryBox.ItemsSource = categoryNames;
+        CategoryBox.SelectedIndex = 0;
+    }
+
+    private void ApplyFilters()
+    {
+        if (!isReady)
+        {
+            return;
+        }
+
+        IEnumerable<ProductCard> result = allCards;
+
+        var searchText = SearchBox.Text?.Trim() ?? "";
+        if (searchText != "")
+        {
+            result = result.Where(card =>
+                card.ProductName.Contains(searchText, StringComparison.OrdinalIgnoreCase)
+                || card.Description.Contains(searchText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (CategoryBox.SelectedIndex > 0)
+        {
+            var selectedCategory = CategoryBox.SelectedItem as string;
+            result = result.Where(card => card.CategoryName == selectedCategory);
+        }
+
+        if (SortBox.SelectedIndex == 1)
+        {
+            result = result.OrderBy(card => card.FinalPrice);
+        }
+        else if (SortBox.SelectedIndex == 2)
+        {
+            result = result.OrderByDescending(card => card.FinalPrice);
+        }
+
+        ProductList.ItemsSource = result.ToList();
+    }
+
+    private void UpdateOrderButton()
+    {
+        OrderButton.Content = $"Заказ ({Session.Cart.Sum(line => line.Quantity)})";
+    }
+
+    private async void ReloadCatalogAsync()
+    {
+        try
+        {
+            LoadProducts();
+            ApplyFilters();
+        }
+        catch (Exception)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка",
+                "Не удалось обновить каталог. Перезапустите приложение.", MessageType.Error);
+        }
+    }
+
+    private void SearchBox_PropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == TextBox.TextProperty)
+        {
+            ApplyFilters();
+        }
+    }
+
+    private void Filter_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        ApplyFilters();
+    }
+
+    private async void ProductList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var selectedCard = ProductList.SelectedItem as ProductCard;
+        if (selectedCard == null)
+        {
+            return;
+        }
+
+        ProductList.SelectedItem = null;
+
+        var productWindow = new ProductWindow(selectedCard);
+        await productWindow.ShowDialog(this);
+        UpdateOrderButton();
+    }
+
+    private async void OrderButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var orderWindow = new OrderWindow();
+        await orderWindow.ShowDialog(this);
+        ReloadCatalogAsync();
+        UpdateOrderButton();
+    }
+
+    private async void OrdersButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var ordersWindow = new OrdersWindow();
+        await ordersWindow.ShowDialog(this);
+        ReloadCatalogAsync();
+    }
+
+    private void LogoutButton_Click(object? sender, RoutedEventArgs e)
+    {
+        Session.Cart.Clear();
+        Session.CurrentUser = null;
+        var loginWindow = new LoginWindow();
+        loginWindow.Show();
+        Close();
+    }
+}
