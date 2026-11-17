@@ -1,0 +1,78 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="chudo.LoginWindow"
+        Width="420"
+        Height="440"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="30" Spacing="12" VerticalAlignment="Center">
+        <Image x:Name="LogoImage" Height="100" Stretch="Uniform" />
+        <TextBlock Text="Авторизация" FontSize="22" HorizontalAlignment="Center" />
+        <TextBlock Text="Логин" />
+        <TextBox x:Name="LoginBox" Watermark="Введите логин" />
+        <Button Content="Войти"
+                IsDefault="True"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Click="LoginButton_Click" />
+    </StackPanel>
+</Window>
+using System;
+using System.Linq;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using chudo.Models;
+using Microsoft.EntityFrameworkCore;
+
+namespace chudo;
+
+public partial class LoginWindow : Window
+{
+    public LoginWindow()
+    {
+        InitializeComponent();
+        Title = AppInfo.WindowTitle("Авторизация");
+        LogoImage.Source = ImageLoader.Load("logo.png");
+    }
+
+    private async void LoginButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var login = LoginBox.Text?.Trim();
+
+        if (string.IsNullOrEmpty(login))
+        {
+            await MessageWindow.ShowAsync(this, "Предупреждение",
+                "Поле «Логин» пустое. Введите свой логин и нажмите «Войти».", MessageType.Warning);
+            return;
+        }
+
+        try
+        {
+            using var db = new PostgresContext();
+            var foundUser = db.Users
+                .Include(user => user.Role)
+                .FirstOrDefault(user => user.Login == login);
+
+            if (foundUser == null)
+            {
+                await MessageWindow.ShowAsync(this, "Ошибка входа",
+                    "Пользователь с таким логином не найден. Проверьте логин (без пробелов и с учётом регистра) и попробуйте снова.",
+                    MessageType.Error);
+                return;
+            }
+
+            Session.CurrentUser = foundUser;
+        }
+        catch (Exception)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка подключения",
+                "Не удалось подключиться к базе данных. Убедитесь, что PostgreSQL запущен, и проверьте строку подключения в файле Models/PostgresContext.cs.",
+                MessageType.Error);
+            return;
+        }
+
+        var catalogWindow = new CatalogWindow();
+        catalogWindow.Show();
+        Close();
+    }
+}
