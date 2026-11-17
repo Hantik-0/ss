@@ -1,0 +1,128 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:chudo"
+        x:Class="chudo.OrderWindow"
+        Width="800"
+        Height="560"
+        WindowStartupLocation="CenterOwner">
+    <Grid RowDefinitions="Auto,*,Auto,Auto" Margin="16">
+        <TextBlock Grid.Row="0" Text="Текущий заказ" FontSize="22" Margin="0,0,0,12" />
+
+        <ListBox x:Name="LinesList" Grid.Row="1">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="local:CartLine">
+                    <Grid ColumnDefinitions="*,90,130,130" Margin="0,4">
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="{Binding Title}" FontWeight="Bold" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding SizeText}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding QuantityText}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Text="{Binding UnitPriceText}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" Text="{Binding LineTotalText}" VerticalAlignment="Center" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <TextBlock x:Name="TotalText" Grid.Row="2" FontSize="20" HorizontalAlignment="Right" Margin="0,12" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Button Content="Назад" Click="BackButton_Click" />
+            <Button Content="Убрать выбранную позицию" Click="RemoveButton_Click" />
+            <Button Content="Отменить заказ" Click="CancelOrderButton_Click" />
+            <Button Content="Подтвердить заказ" Click="ConfirmButton_Click" />
+        </StackPanel>
+    </Grid>
+
+</Window>
+using System;
+using System.Linq;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+
+namespace chudo;
+
+public partial class OrderWindow : Window
+{
+    public OrderWindow()
+    {
+        InitializeComponent();
+        Title = AppInfo.WindowTitle("Оформление заказа");
+        RefreshList();
+    }
+
+    private void RefreshList()
+    {
+        LinesList.ItemsSource = Session.Cart.ToList();
+        TotalText.Text = $"Итого: {Session.Cart.Sum(line => line.LineTotal):0.00} руб.";
+    }
+
+    private async void RemoveButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var selectedLine = LinesList.SelectedItem as CartLine;
+        if (selectedLine == null)
+        {
+            await MessageWindow.ShowAsync(this, "Предупреждение",
+                "Выберите в списке позицию, которую нужно убрать из заказа.", MessageType.Warning);
+            return;
+        }
+
+        Session.Cart.Remove(selectedLine);
+        RefreshList();
+    }
+
+    private async void CancelOrderButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Session.Cart.Count == 0)
+        {
+            await MessageWindow.ShowAsync(this, "Информация", "Заказ пуст, отменять нечего.", MessageType.Info);
+            return;
+        }
+
+        var isConfirmed = await MessageWindow.ConfirmAsync(this, "Отмена заказа",
+            "Все выбранные позиции будут удалены из заказа. Это действие нельзя отменить. Продолжить?");
+        if (!isConfirmed)
+        {
+            return;
+        }
+
+        Session.Cart.Clear();
+        Close();
+    }
+
+    private async void ConfirmButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Session.Cart.Count == 0)
+        {
+            await MessageWindow.ShowAsync(this, "Предупреждение",
+                "В заказе нет товаров. Вернитесь в каталог и добавьте хотя бы одну позицию.",
+                MessageType.Warning);
+            return;
+        }
+
+        string? errorText;
+        try
+        {
+            errorText = OrderService.SaveCart(Session.CurrentUser!.UserId);
+        }
+        catch (Exception)
+        {
+            errorText = "Не удалось сохранить заказ в базе данных. Проверьте подключение и повторите попытку.";
+        }
+
+        if (errorText != null)
+        {
+            await MessageWindow.ShowAsync(this, "Ошибка", errorText, MessageType.Error);
+            return;
+        }
+
+        Session.Cart.Clear();
+        await MessageWindow.ShowAsync(this, "Информация", "Заказ оформлен.", MessageType.Info);
+        Close();
+    }
+
+    private void BackButton_Click(object? sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+}
