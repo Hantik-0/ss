@@ -1,0 +1,117 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="chudo.MessageWindow"
+        Width="440"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <Grid ColumnDefinitions="Auto,*" Margin="20">
+        <Border x:Name="IconBorder"
+                Grid.Column="0"
+                Width="48"
+                Height="48"
+                CornerRadius="24"
+                VerticalAlignment="Top"
+                Margin="0,0,16,0">
+            <TextBlock x:Name="IconText"
+                       FontSize="28"
+                       FontWeight="Bold"
+                       Foreground="White"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+        </Border>
+        <StackPanel Grid.Column="1" Spacing="16">
+            <TextBlock x:Name="MessageText" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton"
+                        Content="Нет"
+                        Width="90"
+                        IsVisible="False"
+                        HorizontalContentAlignment="Center"
+                        Click="CancelButton_Click" />
+                <Button x:Name="OkButton"
+                        Content="OK"
+                        Width="90"
+                        HorizontalContentAlignment="Center"
+                        IsDefault="True"
+                        Click="OkButton_Click" />
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
+using System.Threading.Tasks;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Media;
+
+namespace chudo;
+
+public enum MessageType
+{
+    Info,
+    Warning,
+    Error
+}
+
+public partial class MessageWindow : Window
+{
+    private bool result = false;
+
+    public MessageWindow()
+    {
+        InitializeComponent();
+    }
+
+    private void SetType(MessageType type)
+    {
+        switch (type)
+        {
+            case MessageType.Error:
+                IconText.Text = "×";
+                IconBorder.Background = Brushes.Firebrick;
+                break;
+            case MessageType.Warning:
+                IconText.Text = "!";
+                IconBorder.Background = Brushes.DarkOrange;
+                break;
+            default:
+                IconText.Text = "i";
+                IconBorder.Background = Brushes.SteelBlue;
+                break;
+        }
+    }
+
+    public static async Task ShowAsync(Window owner, string title, string text, MessageType type)
+    {
+        var window = new MessageWindow();
+        window.Title = title;
+        window.MessageText.Text = text;
+        window.SetType(type);
+        await window.ShowDialog(owner);
+    }
+
+    public static async Task<bool> ConfirmAsync(Window owner, string title, string text)
+    {
+        var window = new MessageWindow();
+        window.Title = title;
+        window.MessageText.Text = text;
+        window.SetType(MessageType.Warning);
+        window.OkButton.Content = "Да";
+        window.CancelButton.IsVisible = true;
+        await window.ShowDialog(owner);
+        return window.result;
+    }
+
+    private void OkButton_Click(object? sender, RoutedEventArgs e)
+    {
+        result = true;
+        Close();
+    }
+
+    private void CancelButton_Click(object? sender, RoutedEventArgs e)
+    {
+        result = false;
+        Close();
+    }
+}
